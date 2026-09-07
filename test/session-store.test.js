@@ -68,6 +68,33 @@ test("queued prompts are returned with DOM snapshot context and then cleared", a
   }
 });
 
+test("identical pending freeform prompts from concurrent tabs are queued once", async () => {
+  await withStore(async ({ store, session }) => {
+    const prompt = {
+      uid: "",
+      prompt: "POC-4-TAB: misma accion en dos pestanas",
+      selector: "",
+      tag: "message",
+      text: "Freeform message",
+    };
+
+    await store.queuePrompts(session.key, { prompts: [prompt] });
+    await store.queuePrompts(session.key, { prompts: [prompt] });
+
+    const pending = await store.findByKey(session.key);
+    assert.equal(pending.prompts.length, 1);
+    assert.equal(pending.chat.filter((entry) => entry.role === "user").length, 1);
+
+    const delivered = feedbackResult(await store.takeFeedback(session.key));
+    assert.equal(delivered.prompts.length, 1);
+    assert.equal(delivered.prompts[0].prompt, prompt.prompt);
+
+    await store.queuePrompts(session.key, { prompts: [prompt] });
+    const retried = feedbackResult(await store.takeFeedback(session.key));
+    assert.equal(retried.prompts.length, 1, "the same text can be sent again after the pending batch was delivered");
+  });
+});
+
 test("queued text selection prompts preserve range anchors", async () => {
   const dir = await mkdtemp(path.join(tmpdir(), "lavish-store-"));
   try {
