@@ -232,6 +232,22 @@ export class SessionStore {
         if (result.queued.length > 0 || !plan.hadKnownWarning) acceptedPrompts.push(plan.prompt);
       }
     }
+    // Two review tabs can POST the same freeform batch while it is still pending.
+    // `runExclusive` serializes those writes, so dropping an identical pending
+    // identity here delivers the action once without blocking a later send of
+    // the same text after `takeFeedback` clears the queue. Restore is exempt:
+    // it replays a batch that was already accepted.
+    if (!restoring) {
+      const pendingKeys = new Set((Array.isArray(session.prompts) ? session.prompts : []).map(promptIdentity));
+      const uniqueAccepted = [];
+      for (const prompt of acceptedPrompts) {
+        const identity = promptIdentity(prompt);
+        if (pendingKeys.has(identity)) continue;
+        pendingKeys.add(identity);
+        uniqueAccepted.push(prompt);
+      }
+      acceptedPrompts = uniqueAccepted;
+    }
     session.layout_warnings = warnings;
     const userMessages = restoring
       ? []
@@ -690,6 +706,24 @@ export async function canonicalFile(file) {
 
 export function sessionKey(file) {
   return crypto.createHash("sha256").update(file).digest("hex").slice(0, 16);
+}
+
+function promptIdentity(prompt) {
+  const attachments = Array.isArray(prompt?.attachments)
+    ? prompt.attachments
+        .map((item) => String(item?.id || ""))
+        .filter(Boolean)
+        .sort()
+    : [];
+  return JSON.stringify({
+    uid: String(prompt?.uid || ""),
+    prompt: String(prompt?.prompt || ""),
+    selector: String(prompt?.selector || ""),
+    tag: String(prompt?.tag || ""),
+    text: String(prompt?.text || ""),
+    target: prompt?.target ?? null,
+    attachments,
+  });
 }
 
 // Returns `{ prompt, malformed }`: `malformed` is non-empty when the payload's
